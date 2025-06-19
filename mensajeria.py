@@ -17,6 +17,7 @@ PUERTO_AUTH = 0
 IP_AUTH = ""
 PUERTO_DESTINO = 0
 SOCKETS_ABIERTOS = []
+RUN = True
 
 # === Autenticación ===
 def codificar_md5(texto):
@@ -40,7 +41,7 @@ def autenticar(usuario, clave, ip_auth, puerto_auth):
         
         # 3. Recibir SI/NO (primera respuesta)
         respuesta = s.recv(4).decode().strip()  # "SI\r\n" o "NO\r\n" son 4 bytes
-        nombre = ""
+        
         if respuesta == "SI":
             nombre = s.recv(1024).decode().strip()
             return True, nombre
@@ -61,17 +62,22 @@ def receptor_tcp(puerto):
     servidor.listen()
     print(f"[INFO] Receptor TCP escuchando en puerto {puerto}...")
 
-    while True:
+    while RUN:
         conn, addr = servidor.accept()
         threading.Thread(target=manejar_tcp, args=(conn, addr)).start()
 
 def manejar_tcp(conn, addr):
     try:
-        datos = conn.recv(1024).decode()
+        datosLista = []
+        while '\n' not in ''.join(datosLista):
+            datos = conn.recv(1024).decode()
+            datosLista.append(datos)
+        datosConc = ''.join(datosLista)
         ahora = datetime.now().strftime("[%Y.%m.%d %H:%M]")
-        if datos.startswith("$file"):
+
+        if datosConc.startswith("$file"):
             # Separa el nombre del archivo
-            nombre_archivo = datos.split(" ", 1)[1].strip()
+            nombre_archivo = datosConc.split(" ", 1)[1].strip()
             
             # Prepara para recibir los datos del archivo
             with open(nombre_archivo, "wb") as f:
@@ -83,7 +89,7 @@ def manejar_tcp(conn, addr):
             
             print(f"{ahora} {addr[0]} <Recibido ./{nombre_archivo} de {USUARIO}>")
         else:
-            print(f"{ahora} {addr[0]} {datos}")
+            print(f"{ahora} {datosConc}")
     except Exception as e:
         print(f"{ahora} {addr[0]} <Error recibiendo archivo: {str(e)}>")
     finally:
@@ -98,7 +104,7 @@ def receptor_broadcast(puerto):
     while True:
         data, addr = sock.recvfrom(1024)
         ahora = datetime.now().strftime("[%Y.%m.%d %H:%M]")
-        print(f"{ahora} {data.decode()}")
+        print(f"{ahora} {addr[0]} {data.decode()}")
 
 # === Emisor ===
 def emisor():
@@ -126,7 +132,7 @@ def enviar_mensaje(destino, mensaje):
         ip_destino = destino
         puerto_destino = PUERTO_DESTINO  # Usa el puerto por defecto
 
-    mensaje_formateado = f"{MI_IP} {USUARIO} dice: {mensaje}"
+    mensaje_formateado = f"{MI_IP} {USUARIO} dice: {mensaje} \n"
 
     if ip_destino == "*":  # Broadcast
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -134,6 +140,8 @@ def enviar_mensaje(destino, mensaje):
             s.sendto(mensaje_formateado.encode(), ("255.255.255.255", puerto_destino))
     else:  # Mensaje directo (TCP)
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+
+
             try:
                 ip_destino_resuelto = socket.gethostbyname(ip_destino)  # Resuelve DNS si es necesario
                 s.connect((ip_destino_resuelto, puerto_destino))
@@ -184,6 +192,7 @@ def enviar_archivo(destino, path):
 # === Manejador de señales ===
 def cerrar_programa(signal_num, frame):
     print("\n[INFO] CTRL + C Recibido.... Cerrando sesión")
+    RUN = False
     for s in SOCKETS_ABIERTOS:
         try:
             s.close()
